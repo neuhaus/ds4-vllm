@@ -56,21 +56,6 @@ RUN cmake \
         -DBUILD_SHARED_LIBS=ON && \
     cmake --build /tmp/rocm-build --parallel 16
 
-# Build the usb4_rdma libibverbs provider from source: rdma-core at the ABI
-# the base ships (rdmav57) plus the provider patches from the upstream
-# thunderbolt-ibverbs repo (pinned; same pin as tbv/build-modules.sh).
-FROM ${DS4_BASE} AS provider-build
-USER root
-RUN dnf install -y git cmake gcc libnl3-devel pkgconf-pkg-config && dnf clean all
-RUN git clone --depth 1 -b v57.0 https://github.com/linux-rdma/rdma-core /tmp/rdma-core && \
-    git clone https://github.com/hellas-ai/thunderbolt-ibverbs /tmp/tbv-ibverbs && \
-    git -C /tmp/tbv-ibverbs checkout 76ba39b630a70accb72f19388eefe48844b50eb8 && \
-    cd /tmp/rdma-core && \
-    for p in /tmp/tbv-ibverbs/packaging/rdma-core-patches/0*.patch; do git apply -C1 "$p"; done && \
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNO_PYVERBS=1 -DNO_MAN_PAGES=1 && \
-    cmake --build build --parallel 16 && \
-    ls build/lib/libusb4_rdma-rdmav57.so
-
 FROM ${DS4_BASE}
 
 # Apply the vLLM patch-set to the base's own sources (31 files), then overlay
