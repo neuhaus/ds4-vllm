@@ -37,6 +37,10 @@ import urllib.error
 _MODEL = "deepseek-v4-flash"  # served-model-name
 _URL = "http://127.0.0.1:{port}/v1/chat/completions"
 _MARKER = itertools.count()  # unique prompt prefix: defeats the prefix/KV cache
+# Measured tokens per unit line (28 prose lines = 629, 28 code lines = 2509);
+# the probe pass refines the count, but starting n from the right scale avoids
+# a first probe that is dozens of x the target (e.g. code at 89 tok/line).
+_LINE_TOK = {"prose": 22, "code": 89}
 
 # A line whose token cost is roughly the average for its scenario; the probe
 # pass refines the count, so these only need to be ballpark.
@@ -100,7 +104,7 @@ def build_prompt(kind, target_tokens):
     unit = _PROSE_LINE if kind == "prose" else _CODE_LINE
     ask = ("\n\nContinue the story from here, three paragraphs." if kind == "prose"
            else "\n\nNow implement `process(data)` over this module and return it.")
-    n = max(1, target_tokens // 18)
+    n = max(1, target_tokens // _LINE_TOK.get(kind, 18))
     prev_n = -1
     while True:
         # Unique leading marker (fresh tokens every request) so vLLM's prefix
@@ -110,12 +114,14 @@ def build_prompt(kind, target_tokens):
         marker = f"<unique {next(_MARKER)} {os.urandom(4).hex()}>"
         prompt = marker + "\n" + "\n".join([unit] * n) + ask
         try:
-            _, _, usage = stream_chat(prompt, 1, 600)
+            _, _, usage = stream_chat(prompt, 1, max(300, target_tokens // 10))
         except Exception as e:
-            sys.exit(f"[bench] calibration probe failed at {target_tokens}: {e}")
+            log(f"[bench] calibration probe failed at {target_tokens} {kind}: {e}")
+            return None
         actual = usage.get("prompt_tokens", 0)
         if actual == 0:
-            sys.exit("[bench] no prompt_tokens from calibration probe")
+            log(f"[bench] calibration probe at {target_tokens} {kind}: no prompt_tokens")
+            return None
         if abs(actual - target_tokens) <= max(32, target_tokens // 20) or n <= 1:
             return prompt
         # Granularity floor: if recomputing n yields the same value, no integer
@@ -127,16 +133,21 @@ def build_prompt(kind, target_tokens):
         prev_n = n
         n = max(1, round(n * target_tokens / actual))
         if n > 2_000_000:
-            sys.exit(f"[bench] calibration diverged (target {target_tokens})")
+            log(f"[bench] calibration diverged at {target_tokens} {kind}")
+            return None
 
 
 def run_one(kind, target_ctx, max_tokens):
     prompt = build_prompt(kind, target_ctx)
-    ttft, total, usage = stream_chat(prompt, max_tokens, 900)
+    if prompt is None:
+        log(f"[bench] skipping {kind} at ctx={target_ctx}")
+        return None
+    ttft, total, usage = stream_chat(prompt, max_tokens, max(900, target_ctx // 5))
     pt = usage.get("prompt_tokens", 0)
     ct = usage.get("completion_tokens", 0)
     if pt == 0 or ct == 0:
-        sys.exit(f"[bench] empty usage for ctx={target_ctx} {kind}: {usage}")
+        log(f"[bench] empty usage for ctx={target_ctx} {kind}: {usage}")
+        return None
     prefill_tps = pt / ttft if ttft > 0 else float("nan")
     decode_s = total - ttft
     decode_tps = ct / decode_s if decode_s > 0 else float("nan")
@@ -159,9 +170,20 @@ def main():
     for ctx in args.contexts:
         prefill, prose, code = [], [], []
         for _ in range(args.repeat):
-            _, p1, d1 = run_one("prose", ctx, args.max_tokens)
-            _, p2, d2 = run_one("code", ctx, args.max_tokens)
-            prefill.append(p1); prose.append(d1); code.append(d2)
+            r1 = run_one("prose", ctx, args.max_tokens)
+            r2 = run_one("code", ctx, args.max_tokens)
+            if r1:
+                _, p1, d1 = r1
+                prefill.append(p1); prose.append(d1)
+            else:
+                prose.append(float("nan"))
+            if r2:
+                _, p2, d2 = r2
+                code.append(d2)
+                if not prefill:
+                    prefill.append(p2)
+            else:
+                code.append(float("nan"))
         med = lambda xs: statistics.median(xs) if len(xs) > 1 else xs[0]
         log(f"{ctx:>8} | {med(prefill):>11.1f} | {med(prose):>13.1f} | {med(code):>12.1f}")
     log("-" * 52)
