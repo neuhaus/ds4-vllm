@@ -15,9 +15,12 @@ Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=45min
 TimeoutStopSec=5min
-ExecStart=%h/ds4-cluster-restart.sh
-ExecStop=%h/ds4-cluster-down.sh
+# The scripts run straight from the repo checkout (host/), same absolute path
+# on both boxes -- update this path if the repo lives elsewhere. No $HOME
+# deployment copies anymore.
+ExecStart=/home/sn/git/ds4-vllm/host/ds4-cluster-restart.sh
+ExecStop=/home/sn/git/ds4-vllm/host/ds4-cluster-down.sh
 # ExecStop does not run when ExecStart itself fails; StopPost does, so a
 # failed bringup still tears the cluster down instead of leaving the serve
 # unit and ray daemons running behind a "failed" wrapper. Idempotent.
-ExecStopPost=%h/ds4-cluster-down.sh
+ExecStopPost=/home/sn/git/ds4-vllm/host/ds4-cluster-down.sh

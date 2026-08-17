@@ -161,12 +161,16 @@ distrobox enter vllm -- ibv_devices             # gate: lists ibp195s0 (if §1 d
 
 ## 3. Host orchestration + config
 
-Deploy the `host/` files per README §3 and set the site values in
-`~/ds4-config.yaml` on box1 (head/worker IPs, container name, `transport:
-rdma|tcp`, RDMA HCA pin, disk KV). Two rules that bite:
+Set the site values in `host/ds4-config.yaml` (head/worker IPs, container
+name, `transport: rdma|tcp`, RDMA HCA pin, disk KV). Everything runs **from
+the repo checkout** — no `$HOME` deployment copies: the scripts resolve their
+sibling files relative to their own location, and the systemd unit
+(`host/systemd/ds4-vllm.service`, installed into `~/.config/systemd/user/`)
+points at the repo's `host/ds4-cluster-restart.sh`. Two rules that bite:
 
 - `ds4-cluster-env*.sh` **must be byte-identical on both boxes** — the two TP
-  ranks silently diverge otherwise. Copy the same files to both.
+  ranks silently diverge otherwise. Keep box2's repo synced to the same
+  commit at the same absolute path (box1 → box2 over ssh).
 - Box1 needs passwordless ssh to the worker IP: the cluster scripts drive
   box2's container over ssh.
 

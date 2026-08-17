@@ -198,8 +198,8 @@ container still gets `net=host`; verify with
 
 ## 3. Run
 
-Site specifics live in **`host/ds4-config.yaml`** — deploy it (edited for your
-site) as `~/ds4-config.yaml` on box1 next to the scripts:
+Site specifics live in **`host/ds4-config.yaml`** — edit it in the checkout
+(no deployment copy):
 
 ```yaml
 model: deepseek-ai/DeepSeek-V4-Flash-0731   # HF id or local path; weights on BOTH boxes
@@ -209,7 +209,7 @@ worker_ip: 192.168.100.2 # ray worker address (site value)
 container: vllm        # podman container name (same on both boxes)
 rdma_hca: ibp195s0    # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3 port; name matches the netdev)
 net_iface: ibp195s0    # IPoIB netdev carrying head_ip/worker_ip; NCCL/GLOO sockets bind it
-api_port: 1234
+api_port: 8000
 disk_kv: true          # NVMe prefix-KV tier (fs_lru); prefixes survive restarts
 disk_kv_gib: 30        # per-NODE disk cap; check df on BOTH boxes before raising
 max_ctx: 524288        # --max-model-len (512K, the validated profile)
@@ -222,19 +222,19 @@ warmup_ctx: 2048       # post-start warmup prefill size; 0 disables
 the scripts. `transport: tcp` runs the same cluster without RDMA (correctness /
 fallback profile; sockets over `net_iface`, no fabric).
 
-Deploy (paths are `$HOME`-relative, same layout on both boxes):
+Everything runs **from the repo checkout** — the scripts resolve their sibling
+files relative to their own location, so there are no `$HOME` deployment copies:
 
-- **box1**: `host/ds4-config{,.yaml}`, `ds4-cluster-restart.sh`,
-  `ds4-cluster-down.sh`, `ds4-vllm-manual-serve.sh`, `ds4-vllm-warmup.py`,
-  `container-heal.sh`, all three `ds4-cluster-env*.sh`, and
-  `host/systemd/ds4-vllm.service` into `~/.config/systemd/user/`.
-- **box2**: `ds4-cluster-env*.sh` and `container-heal.sh` only — box2 is driven
-  over ssh (key auth box1→box2 required).
+- **box1**: keep the repo at `/home/sn/git/ds4-vllm` and install
+  `host/systemd/ds4-vllm.service` into `~/.config/systemd/user/` (update the
+  `ExecStart`/`ExecStop` paths if the repo lives elsewhere).
+- **box2**: the same repo synced to the **same absolute path** (box2 is driven
+  over ssh; key auth box1→box2 required).
 
 Then `systemctl --user start ds4-vllm` brings up the whole 2-box cluster
 (teardown → container heal → ray on both boxes → `vllm serve` → API/RDMA
 verify); `stop` tears it down. The env files must stay **identical on both
-boxes** — the two TP ranks silently diverge otherwise. 
+boxes** — the two TP ranks silently diverge otherwise (sync the repo). 
 
 ---
 
