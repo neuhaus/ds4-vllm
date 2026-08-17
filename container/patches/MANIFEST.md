@@ -49,12 +49,19 @@ modules and the aiter config).
 | `vllm/model_executor/kernels/linear/scaled_mm/triton.py` | +83 | `DS4_W8A8_BF16` fast bf16 GEMM path (via ds4_tl_indexer), plus `DS4_W8A8_BF16_DIRECT` which skips the caller-side fp8 quantisation the bf16 path immediately undoes; DS4 flags latched at import instead of per call |
 | `aiter/ops/triton/configs/gemm/gfx1151-GEMM-A8W8_BLOCKSCALE.json` | **new (15)** | tuned A8W8 blockscale GEMM config for gfx1151 |
 
-## Distributed all-reduce over Thunderbolt-4 RDMA
+## Distributed all-reduce (custom path, now inert on the InfiniBand stack)
 | file | Δ | purpose |
 |---|---|---|
 | `vllm/distributed/device_communicators/cuda_communicator.py` | +51 | hook `DS4_TBV_AR` / `DS4_TBV_AR2` custom all-reduce |
-| `tbv_ar.py` *(venv top-level)* | **new (255)** | v1 TB4-RDMA all-reduce (GPU dma-buf MRs) |
+| `tbv_ar.py` *(venv top-level)* | **new (255)** | v1 USB4/Thunderbolt all-reduce (GPU dma-buf MRs) |
 | `tbv_ar2.py` *(venv top-level)* | **new (69)** | v2 GPU-poll + progress-thread all-reduce (~105 µs) |
+
+> These were written for the USB4/Thunderbolt soft-RDMA stack. On the native-IB
+> (ConnectX-3/mlx4) deployment they ship in the image but are **inert**:
+> `DS4_TBV_AR`/`DS4_TBV_AR2` default to 0 and the patch hook falls through to
+> RCCL, which runs the TP all-reduce over the mlx4 fabric. The Dockerfile no
+> longer builds `libtbv_ar*.so`, so enabling the knobs on this image degrades
+> gracefully back to RCCL rather than crashing.
 
 ## Scheduler / KV / cudagraph / MTP
 | file | Δ | purpose |

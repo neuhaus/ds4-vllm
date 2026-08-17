@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # RDMA-transport env for the DS4 vLLM cluster.
-# The base env sets NCCL_IB_HCA=usb4_rdma, a PREFIX that can match more than
-# one device (e.g. after a link reset leaves two ACTIVE rails on one netdev),
-# which makes RCCL's ncclCommInitRank fail with "internal error". Pin one
-# unambiguous HCA here (rdma_hca in ds4-config.yaml). GPU-direct all-reduce
-# still runs via tbv_ar (DS4_TBV_AR2/DS4_TBV_AR_GPU from the base env).
+# The base env sets NCCL_IB_HCA to a prefix that can match more than one
+# device (e.g. a fabric with several mlx4 ports), which makes RCCL's
+# ncclCommInitRank fail with "internal error". Pin one unambiguous HCA here
+# (rdma_hca in ds4-config.yaml). RCCL runs the TP all-reduce over the mlx4
+# fabric (DS4_TBV_AR2/DS4_TBV_AR_GPU from the base env are off).
 source "$HOME/ds4-cluster-env.sh"
-export NCCL_IB_HCA=${DS4_RDMA_HCA:-usb4_rdma5}
+export NCCL_IB_HCA=${DS4_RDMA_HCA:-mlx4_0}
 # RCCL logging is off. Re-enable to debug an init failure (the ncclCommInitRank
 # trap above is the one that matters); expect ~50 lines per boot, mostly the
 # harmless "GPU Direct RDMA not available for device 0" -- gfx1151 has no

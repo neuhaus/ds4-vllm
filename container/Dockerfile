@@ -5,10 +5,14 @@
 # against. The base already contains the full ROCm 7 + PyTorch + vLLM build
 # (vLLM commit 470229c); this file applies the DeepSeek-V4 / DSpark patch
 # (patches/vllm-upstream.patch, 31 files), overlays the 12 new files from
-# ./rootfs, builds the usb4_rdma provider from source (rdma-core + the
-# upstream thunderbolt-ibverbs patches), compiles the TB4-RDMA all-reduce
-# natives, and rebuilds ROCr. Third-party sources are FETCHED at pinned
-# commits, not vendored (network needed on first build).
+# ./rootfs, guarantees the stock mlx4 (ConnectX-3) libibverbs provider, and
+# rebuilds ROCr. Third-party sources are FETCHED at pinned commits, not
+# vendored (network needed on first build).
+#
+# The custom Thunderbolt/USB4 soft-RDMA provider and tbv_ar all-reduce are
+# intentionally NOT built here: this image targets a native InfiniBand fabric
+# (mlx4), where RCCL runs the TP all-reduce. The tbv_ar*.py wrappers still ship
+# via rootfs but are inert (DS4_TBV_AR/DS4_TBV_AR2=0 in the cluster env).
 #
 # Build (context is the REPO ROOT):
 #   container/build.sh               # -> ds4-vllm-patched:local
@@ -82,28 +86,10 @@ COPY --from=rocr-idle-fix --chown=root:root \
   /tmp/rocm-build/rocr/lib/libhsa-runtime64.so.1.21.0 \
   /opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/libhsa-runtime64.so.1
 
-# usb4_rdma userspace provider. libibverbs matches a provider to a device BY
-# NAME, so without these two files `ibv_devices` is EMPTY inside the container:
-# tbv_ar init fails and NCCL_IB cannot see the rail, and the cluster silently
-# falls back to TCP.
-COPY --from=provider-build --chown=root:root \
-  /tmp/rdma-core/build/lib/libusb4_rdma-rdmav57.so /usr/lib64/libibverbs/
-RUN printf 'driver usb4_rdma\n' > /etc/libibverbs.d/usb4_rdma.driver
-
-# Build the TB4-RDMA all-reduce natives that tbv_ar.py / tbv_ar2.py ctypes-load.
-# rootfs/ carries only the python wrappers, so without this step DS4_TBV_AR2
-# init fails at "libtbv_ar2.so not found" and the all-reduce falls back.
-# rdma-core-devel is only needed for <infiniband/verbs.h> at build time; the
-# base ships the runtime but not the headers.
-COPY --chown=root:root container/native/ /tmp/ds4-native/
-RUN dnf install -y rdma-core-devel && \
-    /opt/rocm/bin/hipcc -O2 --offload-arch=gfx1151 -shared -fPIC \
-      -o /opt/venv/lib/python3.12/site-packages/libtbv_ar2.so \
-      /tmp/ds4-native/tbv_ar2.hip -libverbs -lpthread && \
-    gcc -O2 -shared -fPIC \
-      -o /opt/venv/lib/python3.12/site-packages/libtbv_ar.so \
-      /tmp/ds4-native/tbv_ar.c -libverbs && \
-    dnf clean all && rm -rf /tmp/ds4-native
+# Stock rdma-core userspace (idempotent): the mlx4 provider ships with it
+# (libmlx4-rdmav2.so + /etc/libibverbs.d/mlx4.driver), which is what RCCL uses
+# to open the ConnectX-3 HCA. The base likely has it; this guarantees it.
+RUN dnf install -y rdma-core && dnf clean all
 
 # Drop stale bytecode for the packages we touched so the first import recompiles
 # from the patched sources. (COPY already writes fresh mtimes, which invalidates
@@ -116,7 +102,7 @@ RUN find /opt/venv/lib/python3.12/site-packages/vllm \
 # base digest does not carry it, and box2 uses toolbox rather than distrobox.
 LABEL com.github.containers.toolbox="true" \
       org.opencontainers.image.title="ds4-vllm-patched" \
-      org.opencontainers.image.description="DeepSeek-V4-Flash vLLM patched engine (AMD gfx1151, TP=2, TB4-RDMA)" \
+      org.opencontainers.image.description="DeepSeek-V4-Flash vLLM patched engine (AMD gfx1151, TP=2, InfiniBand mlx4)" \
       ds4.base="docker.io/kyuz0/vllm-therock-gfx1151@sha256:25fd294f" \
       ds4.vllm_commit="470229c" \
       ds4.snapshot_equiv="localhost/ds4-vllm-patched:20260728"

@@ -26,10 +26,18 @@ export PYTHONHASHSEED=0
 # make the allocator grow anyway. Safe with --enforce-eager (no graph capture).
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.85
 export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}ignore::FutureWarning"
-export NCCL_SOCKET_IFNAME=thunderbolt0
-export GLOO_SOCKET_IFNAME=thunderbolt0
-export NCCL_IB_HCA=usb4_rdma
-export NCCL_IB_GID_INDEX=1
+# Control-plane sockets (ray, NCCL/GLOO rendezvous) run over the management
+# interface carrying head_ip/worker_ip -- NOT the IB fabric. DS4_NET_IFACE
+# comes from ds4-config.yaml (net_iface, commented there); empty lets NCCL
+# auto-detect the interface with a route to the peer.
+export NCCL_SOCKET_IFNAME=${DS4_NET_IFACE:-}
+export GLOO_SOCKET_IFNAME=${DS4_NET_IFACE:-}
+# IB data path: native InfiniBand on the ConnectX-3 mlx4 HCA. DS4_RDMA_HCA
+# (ds4-config.yaml rdma_hca) pins the exact device; the default matches the
+# fabric's first mlx4 port. NCCL_IB_GID_INDEX=0 is the native-IB link-local
+# GID -- index 1 is RoCEv2-IPv4-only and does not exist on an IB fabric.
+export NCCL_IB_HCA=${DS4_RDMA_HCA:-mlx4_0}
+export NCCL_IB_GID_INDEX=0
 export NCCL_IB_DISABLE=0
 export NCCL_NET_GDR_LEVEL=0
 export NCCL_IB_TIMEOUT=23
@@ -62,11 +70,16 @@ export DS4_W8A8_BF16=1
 # Set 0 to fall through to the stock path, which is byte-for-byte the old
 # behaviour.
 export DS4_W8A8_BF16_DIRECT=${DS4_W8A8_BF16_DIRECT:-1}
-export DS4_TBV_AR=1
+# The custom Thunderbolt/USB4 soft-RDMA all-reduce (tbv_ar / tbv_ar2) is NOT
+# used on the native-IB path: RCCL runs the TP all-reduce over the mlx4 fabric
+# (and prefill's larger all-reduces always went to RCCL). Both knobs default to
+# off so the patch hook falls through to RCCL; set 1 to re-enable the custom
+# path if you ever move back to the USB4 stack.
+export DS4_TBV_AR=${DS4_TBV_AR:-0}
 # DS4_TBV_AR2=1 uses the v2 GPU-poll+progress-thread all-reduce (~105us vs v1
 # 228us). Takes precedence over DS4_TBV_AR; auto-falls-back to v1 if it fails to
 # init. Set 0 to use v1.
-export DS4_TBV_AR2=${DS4_TBV_AR2:-1}
+export DS4_TBV_AR2=${DS4_TBV_AR2:-0}
 export DS4_MTP_CAPTURE=1
 # DS4_MTP_MAXSEQS: above this many concurrent sequences the DSpark drafter takes
 # its `n_seg > max_seqs` bail-out and stops speculating ENTIRELY -- acceptance
@@ -119,11 +132,10 @@ fi
 # interrupts, so latency-sensitive finite waits preserve upstream behavior.
 # Set DS4_HSA_MWAITX=1 to use MONITORX/MWAITX during those finite waits.
 export HSA_ENABLE_MWAITX=${DS4_HSA_MWAITX:-0}
-# GPU-direct all-reduce: tbv_ar v1 data slots live in DEVICE memory as
-# dma-buf MRs (RDMA lands straight in GPU pages; flags stay host-side for the
-# CPU spin). Bit-exact and faster than host staging. Set 0 to fall back to
-# pinned-host staging.
-export DS4_TBV_AR_GPU=${DS4_TBV_AR_GPU:-1}
+# GPU-direct all-reduce: on the IB path RCCL handles the fabric (gfx1151 has no
+# GPUDirect, so GDR is host-staged regardless -- NCCL_NET_GDR_LEVEL=0 above).
+# DS4_TBV_AR_GPU only applies to the custom USB4 path, which is off here.
+export DS4_TBV_AR_GPU=${DS4_TBV_AR_GPU:-0}
 # MXFP4 matmul_ogs DECODE kernel config (tuned on this hardware; block_k 256 +
 # num_stages 2 is the bandwidth lever the stock heuristic never picks).
 # Decode-scoped in opt_flags (only under block_m<128) so prefill is untouched.

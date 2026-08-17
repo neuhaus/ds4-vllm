@@ -9,46 +9,58 @@ hard-to-reverse and order matters.
 
 DeepSeek-V4-Flash served by a **patched vLLM**, tensor-parallel across **two AMD
 Strix Halo (gfx1151) boxes**, with the inter-GPU all-reduce carried over a
-**Thunderbolt-4 / USB4 RoCE-RDMA** link.
+**native InfiniBand** link (ConnectX-3 / mlx4) handled by **RCCL**.
 
 ```
         ┌────────────── box1 (ray HEAD, gfx1151) ──────────────┐
         │  distrobox "vllm"  ──►  vllm serve  TP rank 0         │
         │  ds4-vllm.service → ds4-cluster-restart.sh            │
         └───────────────┬───────────────────────────────────────┘
-                        │  Thunderbolt-4 cable
-                        │  RoCE-RDMA dev = usb4_rdma*   (tbv stack)
-                        │  IP link thunderbolt0 = 192.168.100.1/.2
+                        │  InfiniBand cable (QSFP)
+                        │  HCA = mlx4_0   (ConnectX-3)
+                        │  control plane = head_ip / worker_ip
         ┌───────────────┴───────────────────────────────────────┐
         │  distrobox "vllm"  ──►  ray worker  TP rank 1          │
         └────────────── box2 (ray WORKER, gfx1151) ─────────────┘
 ```
 
-Three independent layers, build/verify them in this order:
+The **interconnect latency is the TP bottleneck**: the decode step chains ~160
+all-reduces per token, so per-op latency dominates (the USB4 custom path this
+replaced measured ~105 µs/op; RCCL-over-IB should land well under that —
+`host/ds4-rccl-bench.sh` measures it). Bandwidth is secondary; ConnectX-3
+(40 Gb/s) has thin headroom at peak concurrency but is not the limiter at
+realistic load.
 
-1. **tbv RDMA** (`tbv/`) — the Thunderbolt interconnect. Foundational and the
-   riskiest; do it first. *(The cluster will also run without it on a slow TCP
-   fallback — see §1.5 to de-risk by validating vLLM first, then adding RDMA.)*
+Three layers, build/verify them in this order:
+
+1. **InfiniBand fabric** — stock `mlx4_core`/`mlx4_ib` in-tree drivers, OpenSM
+   (subnet manager), both ports Active with a LID. No custom kernel modules.
 2. **vLLM engine** (`container/`) — rebuild the patched image, one distrobox per box.
 3. **Host orchestration** (`host/`) — the launch scripts, env, model weights.
+
+> **USB4/Thunderbolt alternative.** The original interconnect — a custom
+> Thunderbolt/USB4 soft-RDMA stack (`tbv/`) with its own kernel modules,
+> provider, and `tbv_ar`/`tbv_ar2` all-reduce — is still documented in
+> [`tbv/README.md`](tbv/README.md). It is NOT built or used on this path:
+> `DS4_TBV_AR*` default to 0 and RCCL runs the all-reduce over the fabric.
 
 ## 0.1 Prerequisites (verify these exist; do NOT try to synthesize them)
 
 - **2× AMD Strix Halo / gfx1151**, ~128 GB unified memory each, on the same LAN.
-- A **Thunderbolt-4 / USB4 cable** physically connecting the two boxes.
+- A **ConnectX-3 (mlx4)** card in each box, direct-attached (QSFP cable) and
+  **OpenSM running** on one of them (ConnectX-3 has no embedded subnet manager).
+  `ibv_devinfo` must show the port **Active** with a LID on both boxes.
 - Linux with **kernel headers/devel** for the running kernel on each box, `podman`,
-  `distrobox`, `rdma-core`/`libibverbs`, `git`, build toolchain.
+  `distrobox`, `rdma-core`/`libibverbs`, `git`, build toolchain. mlx4 uses the
+  **stock in-tree drivers** — nothing out-of-tree to build.
 - The model weights **`deepseek-ai/DeepSeek-V4-Flash-0731`** (~150 GB) downloaded
   on **both** boxes (`hf download deepseek-ai/DeepSeek-V4-Flash-0731`).
-- Root/sudo on both boxes (kernel modules, systemd units).
-- **Secure Boot disabled on both boxes** — the tbv modules are unsigned;
-  a Secure Boot kernel will refuse every `insmod` in §1.
+- Root/sudo on both boxes (systemd units, RDMA memlock).
 
-Pick roles now and keep them consistent everywhere: **box1 = ray head**, IP on
-Thunderbolt `192.168.100.1`; **box2 = worker**, `192.168.100.2`. Site values
-(IPs, container name, transport, HCA pin, disk KV) live in
-`host/ds4-config.yaml`, deployed as `~/ds4-config.yaml` on box1 (see §3);
-paths in the scripts are `$HOME`-relative.
+Pick roles now and keep them consistent everywhere: **box1 = ray head**,
+**box2 = worker**. Site values (IPs, container name, transport, HCA pin, disk
+KV) live in `host/ds4-config.yaml`, deployed as `~/ds4-config.yaml` on box1
+(see §3); paths in the scripts are `$HOME`-relative.
 
 ---
 
@@ -68,86 +80,59 @@ needle/recall probes at your target context depth before it ships (see §5).
 
 ---
 
-## 1. tbv — Thunderbolt RDMA (do this first)
+## 1. InfiniBand fabric (do this first)
 
-Full detail in [`tbv/README.md`](tbv/README.md); this is the ordered action list.
-**The kernel modules are vermagic-locked to a specific kernel**,
-so plan to build for your exact kernel. Run every module step on **both**
-boxes.
+Native InfiniBand on the **stock in-tree drivers** — no custom kernel modules,
+no provider builds, no coordinated reboots. This is the connect-the-dots step,
+run once per box. Full detail in the distro/OpenSM docs; the gates below are
+what the cluster actually needs.
 
-### 1.1 Build the matched core+net (per box, per kernel)
+### 1.1 Drivers and firmware
 
-The `thunderbolt` core, `thunderbolt_net`, and `thunderbolt_ibverbs` must be one
-matched set or the box **panics on cable connect**.
+- **`mlx4_core` / `mlx4_ib`** are in-tree. Load them: `modprobe mlx4_core
+  mlx4_ib`. Nothing out-of-tree to build (unlike the old `tbv/` USB4 stack).
+- Port mode: **InfiniBand** (`LINK_TYPE_P1=1`), set with `mlxconfig`/`mstconfig`
+  + `mstflint`. (This deployment is native IB with OpenSM — **not** RoCE.)
+- **OpenSM** running on one box (ConnectX-3 has no embedded subnet manager);
+  it assigns the LIDs and brings the ports to Active.
 
-```bash
-tbv/build-modules.sh [KVER]          # all four modules, no sudo
-sudo tbv/install-modules.sh [KVER]   # stage /var/lib/tbv + blacklist + boot units
-```
+### 1.2 Memlock (both boxes)
 
-`build-modules.sh` fetches the pinned upstream trees (westeri @`503c5ae`;
-hellas-ai/thunderbolt-ibverbs @`76ba39b` + `tbv/ibverbs-local.patch`), applies
-the kernel patch series the ibverbs repo carries, and builds against the
-target kernel-devel. Gotchas it handles:
-- Force **`CONFIG_USB4_CONFIGFS=y`** in the KDIR `auto.conf` (else
-  `tb_configfs_init/exit` are undefined at link).
-- Build `thunderbolt_net` with **`KBUILD_EXTRA_SYMBOLS=<core>/Module.symvers`**
-  (it needs `tb_ring_throttling` from the patched core).
-- MODVERSIONS is off; only **vermagic** must match `uname -r`.
+`sudo tbv/bringup/fix-memlock.sh` — the only file kept from the USB4 stack; it
+raises the RDMA memlock limit (`/etc/security/limits.d/99-rdma-memlock.conf` +
+systemd `DefaultLimitMEMLOCK`), which RCCL/`ibv_reg_mr` need. Re-login (or a new
+ssh session) after running.
 
-### 1.2 Build the out-of-tree modules
+### 1.3 Configure the IPoIB netdev (both boxes)
 
-`build-modules.sh` above already builds ibverbs + nhi_throttle (steps 3-4)
-against the same patched KDIR; nothing separate to run.
+The control plane (ray, NCCL/GLOO sockets) runs over **IPoIB**, whose netdev
+here is `ibp195s0` (predictable naming; find yours with `ls /sys/class/net/`).
+Give it the `head_ip`/`worker_ip` from `ds4-config.yaml` and bring it up at
+boot (NetworkManager/nmtui or an `nmcli con add type infiniband` profile).
+**Those IPs must actually be configured on this interface** — ray binds to them.
 
-### 1.3 Install the userspace provider (host AND container)
-
-```bash
-# The serving container image builds and ships the provider itself
-# (container/Dockerfile provider-build stage) — nothing to install for serving.
-# For host-side diagnostics (ibv_devices on the host), build the same way:
-# rdma-core v57.0 + the provider patches from the upstream ibverbs repo.
-```
-The provider matches devices **by name**, which is why the device must be
-renamed to `usb4_rdma*`.
-
-### 1.4 Stage, load, and bring up — COORDINATED
-
-- `sudo tbv/install-modules.sh` (on each box) does the whole install: stages
-  the built modules into `/var/lib/tbv`, blacklists the stock thunderbolt
-  driver (modprobe.d + kernel args, which also keeps the initramfs copy from
-  shadowing it), installs and enables `tbv-thunderbolt-patched.service`
-  (loads matched core+net at boot) and `tbv-roce.service` (the RoCE bring-up:
-  loads ibverbs with `roce_netdev=thunderbolt0`, renames the rail to
-  `usb4_rdma0`, populates the GID table, sets the 8 µs NHI throttle).
-- Ensure `thunderbolt0` autoconnects to its `192.168.100.x` IP at boot **before**
-  ibverbs claims the DMA rings — `install-modules.sh` prints the `nmcli`
-  command that writes the autoconnect NetworkManager profile.
-- **Then reboot BOTH boxes ~together.** The handshake only converges when both
-  come up in the right order simultaneously.
-
-> 🛑 **Do NOT** live-reload the core, and **do NOT** stagger per-box ibverbs
-> reloads. Both wedge the Thunderbolt HopID/tunnel allocator and require a
-> **coordinated reboot of both boxes** to recover. Live-swapping only
-> `thunderbolt_net` is the one safe hot operation.
-
-### 1.5 Verify RDMA (gate)
+### 1.4 Verify RDMA (gate)
 
 ```bash
-ls /sys/class/infiniband/                 # -> usb4_rdma0 (or usb4_rdma5)
-rdma link                                 # port state ACTIVE / PHYS_STATE LinkUp
-cat /sys/class/infiniband/usb4_rdma0/ports/1/gids/1   # NON-zero (RoCEv2 IPv4 GID = index 1)
-ibv_devices                               # lists usb4_rdma0
+rdma link                                          # mlx4_0 state ACTIVE / LinkUp
+ibv_devinfo -d mlx4_0                              # port state Active, with a LID
+ls /sys/class/infiniband/                          # -> mlx4_0
+ip -br addr show ibp195s0                          # has head_ip / worker_ip
 ```
-If `gids/1` is all-zero, `thunderbolt0` has no `192.168.100.x` IP yet — fix the IP
-first. If `usb4_rdma*` never appears after a kernel change, the `.ko` vermagic no
-longer matches: rebuild (§1.1–1.2) and `sudo systemctl restart tbv-roce.service`
-on both boxes.
+Then inside the serving container: `distrobox enter vllm -- ibv_devices` must
+list `mlx4_0` (the image guarantees the mlx4 libibverbs provider).
 
 **De-risk option:** RDMA is a performance layer, not a correctness gate — set
-`transport: tcp` in `~/ds4-config.yaml` to run the same cluster over sockets
-(much slower decode). If you want to validate the model path first, skip to
-§2–§4 on TCP now and return to finish RDMA once tokens are flowing.
+`transport: tcp` in `~/ds4-config.yaml` to run the same cluster over sockets on
+`net_iface` (much slower decode). If you want to validate the model path first,
+skip to §2–§4 on TCP now and return to finish IB once tokens are flowing.
+
+> **USB4/Thunderbolt alternative.** The original interconnect (`tbv/` — custom
+> kernel modules, provider, `tbv_ar`/`tbv_ar2` all-reduce) is documented in
+> [`tbv/README.md`](tbv/README.md). Not used here: `DS4_TBV_AR*` default to 0
+> and RCCL runs the all-reduce over the mlx4 fabric. `host/ds4-rccl-bench.sh`
+> measures the per-op latency to beat (USB4 was ~105 µs; the decode step chains
+> ~160 all-reduces per token).
 
 ---
 
@@ -169,7 +154,7 @@ distrobox create --name vllm --image ds4-vllm-patched:local --additional-flags \
    --device /dev/kfd --device /dev/dri --device /dev/infiniband \
    --group-add video --group-add render --security-opt seccomp=unconfined'
 distrobox enter vllm -- vllm --version          # gate: prints a version
-distrobox enter vllm -- ibv_devices             # gate: lists usb4_rdma0 (if §1 done)
+distrobox enter vllm -- ibv_devices             # gate: lists mlx4_0 (if §1 done)
 ```
 
 ## 3. Host orchestration + config
@@ -194,6 +179,8 @@ teardown + stranded-process reap, container heal on both boxes, ray head +
 box2 worker (2 GPUs gate), then `vllm serve` via `ds4-vllm-manual-serve.sh`
 as the transient `ds4-vllm-manual` unit (MTP speculative decode,
 `deepseek_v4` tokenizer/reasoning/tool parsers, fp8 KV, eager, disk KV
-tier), verifies the API and the RDMA all-reduce, and dispatches the
-warmup (`ds4-vllm-warmup.py`, `warmup_ctx` in the yaml) before reporting
-success. `systemctl --user stop ds4-vllm` tears everything down.
+tier), verifies the API and the IB fabric (`rdma link` must show the pinned
+HCA ACTIVE), and dispatches the warmup (`ds4-vllm-warmup.py`, `warmup_ctx` in
+the yaml) before reporting success. `systemctl --user stop ds4-vllm` tears
+everything down. Run `host/ds4-rccl-bench.sh` afterwards to measure the RCCL
+all-reduce per-op latency (the number to beat: USB4 tbv_ar2 ~105 µs/op).

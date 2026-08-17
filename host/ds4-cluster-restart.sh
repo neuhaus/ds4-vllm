@@ -40,7 +40,7 @@ CENV=$HOME/ds4-cluster-env.$TRANSPORT.sh
 SERVE=$HOME/ds4-vllm-manual-serve.sh
 UNIT=ds4-vllm-manual
 # Exports that must reach the env files on BOTH boxes (sourced at ray start).
-ENVPASS="export DS4_RDMA_HCA=${DS4_RDMA_HCA:-};"
+ENVPASS="export DS4_RDMA_HCA=${DS4_RDMA_HCA:-} DS4_NET_IFACE=${DS4_NET_IFACE:-};"
 [ -f "$CENV" ] || { echo "!! $CENV missing (transport=$TRANSPORT)"; exit 1; }
 # Memory + disk-KV knobs: yaml -> the DS4_* the serve script reads.
 case "${DS4_DISK_KV:-true}" in true|1|on|yes) DISK_KV=1;; *) DISK_KV=0;; esac
@@ -137,9 +137,11 @@ systemd-run --user --collect --unit=ds4-vllm-warmup \
 echo "== verify =="
 journalctl --user -u "$UNIT.service" --no-pager -o cat --since "-20min" 2>/dev/null \
   | grep -aE "GPU KV cache size|Maximum concurrency" | tail -2 | sed 's/^/   /'
-rdma=$(journalctl --user -u "$UNIT.service" --no-pager -o cat --since "-20min" 2>/dev/null \
-  | grep -aoE "tbv_ar2: rank[0-9] ready \(qpn=[0-9]+ peer_qpn=[0-9]+\)" | head -1)
-echo "   RDMA: ${rdma:-!! tbv_ar2 NOT ready -- decode all-reduce is not on RDMA}"
+# Native-IB fabric check: the pinned HCA must be ACTIVE (OpenSM assigned a LID)
+# inside the serving container -- that is the link RCCL's all-reduce runs over.
+rdma_link=$(inbox "rdma link 2>/dev/null | grep -wE '${DS4_RDMA_HCA:-mlx4_0}' | grep -w ACTIVE" 30 2>/dev/null)
+echo "   RDMA: ${rdma_link:-!! no '${DS4_RDMA_HCA:-mlx4_0}' ACTIVE rdma link -- check cable/OpenSM}"
+echo "   RCCL bench: $HOME/ds4-rccl-bench.sh (decode all-reduce µs/op vs tbv_ar2's ~105)"
 echo "   vllm serve procs: $(ps -eo cmd --no-headers | grep -c 'bin/[v]llm serve deepseek') (want 1)"
 echo "   ray idle workers: $(ps -eo cmd --no-headers | grep -c '[r]ay::IDLE')"
 echo "   MemAvailable: $(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)MB"
