@@ -43,7 +43,7 @@ Hardware: **2× AMD Strix Halo (gfx1151)** boxes (~128 GB unified memory each), 
 hf download deepseek-ai/DeepSeek-V4-Flash-0731
 
 # 1. InfiniBand fabric, on BOTH boxes (stock in-tree drivers; no kernel builds)
-modprobe mlx4_core mlx4_ib          # verify: ibv_devinfo -d mlx4_0 -> Active + LID
+modprobe mlx4_core mlx4_ib          # verify: ibv_devinfo -d ibp195s0 -> Active + LID
 sudo tbv/bringup/fix-memlock.sh     # RDMA memlock; re-login after
 #    IPoIB netdev (ibp195s0) gets head_ip/worker_ip; OpenSM on one box assigns LIDs
 
@@ -126,8 +126,9 @@ ds4-vllm-share/
   install it on the host).
 - **podman** + **distrobox** on both hosts (rootless is fine; the live setup uses it).
 - **Native InfiniBand** between the boxes (ConnectX-3 / mlx4, OpenSM running).
-  The scripts expect an RDMA HCA named `mlx4_0` (set `rdma_hca` in the config)
-  and an **IPoIB netdev** (here `ibp195s0`) carrying `head_ip`/`worker_ip`.
+  The scripts expect an RDMA HCA named `ibp195s0` here (matches the netdev;
+  set `rdma_hca` in the config to whatever `ibv_devices` prints) and an
+  **IPoIB netdev** carrying `head_ip`/`worker_ip`.
   This uses the **stock in-tree `mlx4_core`/`mlx4_ib` drivers** — nothing
   out-of-tree to build (the old custom `tbv/` USB4 stack is documented in
   [`tbv/README.md`](tbv/README.md) but not used here). Without RDMA, the stack
@@ -206,7 +207,7 @@ transport: rdma        # rdma | tcp — which ds4-cluster-env.<transport>.sh the
 head_ip: 192.168.100.1 # ray head control-plane address (site value, on the IPoIB/LAN iface)
 worker_ip: 192.168.100.2 # ray worker address (site value)
 container: vllm        # podman container name (same on both boxes)
-rdma_hca: mlx4_0       # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3 port)
+rdma_hca: ibp195s0    # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3 port; name matches the netdev)
 net_iface: ibp195s0    # IPoIB netdev carrying head_ip/worker_ip; NCCL/GLOO sockets bind it
 api_port: 1234
 disk_kv: true          # NVMe prefix-KV tier (fs_lru); prefixes survive restarts
@@ -251,7 +252,7 @@ The themes:
   (`DS4_MOE_BN/NW/NS/BK/WPE`, the `block_k` bandwidth lever), a tuned gfx1151
   A8W8 GEMM config, and a `DS4_W8A8_BF16` fast bf16 path.
 - **InfiniBand all-reduce via RCCL** — the TP=2 all-reduce runs over the
-  native-IB fabric (`NCCL_IB_HCA=mlx4_0`, GID index 0); the custom USB4
+  native-IB fabric (`NCCL_IB_HCA=ibp195s0`, GID index 0); the custom USB4
   `tbv_ar`/`tbv_ar2` all-reduce (the `tbv/` stack) is kept but inert
   (`DS4_TBV_AR*` default 0). `host/ds4-rccl-bench.sh` measures the RCCL
   per-op latency.

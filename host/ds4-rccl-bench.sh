@@ -39,7 +39,7 @@ box2 "\$HOME/container-heal.sh $CTR" 60 >/dev/null 2>&1 || true
 inbox true 20 >/dev/null 2>&1 || { echo "!! box1 $CTR not exec-able"; exit 1; }
 box2 "podman exec $CTR true" 20 >/dev/null 2>&1 || { echo "!! box2 $CTR not exec-able"; exit 1; }
 
-echo "== RCCL bench: $HEAD_IP:$PORT, $ITERS iters, HCA=${DS4_RDMA_HCA:-mlx4_0} =="
+echo "== RCCL bench: $HEAD_IP:$PORT, $ITERS iters, HCA=${DS4_RDMA_HCA:-ibp195s0} =="
 
 # rank1 on box2 in the background, rank0 on box1 in the foreground; both source
 # the rdma cluster-env so NCCL_IB_HCA/NCCL_IB_GID_INDEX point at the fabric.

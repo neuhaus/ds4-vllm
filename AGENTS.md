@@ -17,7 +17,7 @@ Strix Halo (gfx1151) boxes**, with the inter-GPU all-reduce carried over a
         │  ds4-vllm.service → ds4-cluster-restart.sh            │
         └───────────────┬───────────────────────────────────────┘
                         │  InfiniBand cable (QSFP)
-                        │  HCA = mlx4_0   (ConnectX-3)
+                        │  HCA = ibp195s0  (ConnectX-3; udev-named after netdev)
                         │  control plane = head_ip / worker_ip
         ┌───────────────┴───────────────────────────────────────┐
         │  distrobox "vllm"  ──►  ray worker  TP rank 1          │
@@ -114,13 +114,15 @@ boot (NetworkManager/nmtui or an `nmcli con add type infiniband` profile).
 ### 1.4 Verify RDMA (gate)
 
 ```bash
-rdma link                                          # mlx4_0 state ACTIVE / LinkUp
-ibv_devinfo -d mlx4_0                              # port state Active, with a LID
-ls /sys/class/infiniband/                          # -> mlx4_0
+rdma link                                          # ibp195s0 state ACTIVE / LinkUp
+ibv_devinfo -d ibp195s0                            # port state Active, with a LID
+ls /sys/class/infiniband/                          # -> ibp195s0 (udev-named after netdev)
 ip -br addr show ibp195s0                          # has head_ip / worker_ip
 ```
 Then inside the serving container: `distrobox enter vllm -- ibv_devices` must
-list `mlx4_0` (the image guarantees the mlx4 libibverbs provider).
+list `ibp195s0` (the image guarantees the mlx4 libibverbs provider). The HCA
+name matches the netdev on this stack; on another box use whatever
+`ibv_devices` prints and set `rdma_hca` in the config to match.
 
 **De-risk option:** RDMA is a performance layer, not a correctness gate — set
 `transport: tcp` in `~/ds4-config.yaml` to run the same cluster over sockets on
@@ -154,7 +156,7 @@ distrobox create --name vllm --image ds4-vllm-patched:local --additional-flags \
    --device /dev/kfd --device /dev/dri --device /dev/infiniband \
    --group-add video --group-add render --security-opt seccomp=unconfined'
 distrobox enter vllm -- vllm --version          # gate: prints a version
-distrobox enter vllm -- ibv_devices             # gate: lists mlx4_0 (if §1 done)
+distrobox enter vllm -- ibv_devices             # gate: lists ibp195s0 (if §1 done)
 ```
 
 ## 3. Host orchestration + config

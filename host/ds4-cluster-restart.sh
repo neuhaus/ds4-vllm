@@ -139,8 +139,8 @@ journalctl --user -u "$UNIT.service" --no-pager -o cat --since "-20min" 2>/dev/n
   | grep -aE "GPU KV cache size|Maximum concurrency" | tail -2 | sed 's/^/   /'
 # Native-IB fabric check: the pinned HCA must be ACTIVE (OpenSM assigned a LID)
 # inside the serving container -- that is the link RCCL's all-reduce runs over.
-rdma_link=$(inbox "rdma link 2>/dev/null | grep -wE '${DS4_RDMA_HCA:-mlx4_0}' | grep -w ACTIVE" 30 2>/dev/null)
-echo "   RDMA: ${rdma_link:-!! no '${DS4_RDMA_HCA:-mlx4_0}' ACTIVE rdma link -- check cable/OpenSM}"
+rdma_link=$(inbox "rdma link 2>/dev/null | grep -wE '${DS4_RDMA_HCA:-ibp195s0}' | grep -w ACTIVE" 30 2>/dev/null)
+echo "   RDMA: ${rdma_link:-!! no '${DS4_RDMA_HCA:-ibp195s0}' ACTIVE rdma link -- check cable/OpenSM}"
 echo "   RCCL bench: $HOME/ds4-rccl-bench.sh (decode all-reduce µs/op vs tbv_ar2's ~105)"
 echo "   vllm serve procs: $(ps -eo cmd --no-headers | grep -c 'bin/[v]llm serve deepseek') (want 1)"
 echo "   ray idle workers: $(ps -eo cmd --no-headers | grep -c '[r]ay::IDLE')"

@@ -7,7 +7,8 @@ transport: rdma        # rdma | tcp -- which ds4-cluster-env.<transport>.sh the 
 head_ip: 192.168.100.1  # ray head control-plane address, reachable from the worker (site value)
 worker_ip: 192.168.100.2 # ray worker address, reachable from the head (site value)
 container: vllm        # podman container name (same on both boxes)
-rdma_hca: mlx4_0       # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3/mlx4 port)
+rdma_hca: ibp195s0    # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3; name
+                       # here matches the netdev -- verify with `ibv_devices` on each box)
 net_iface: ibp195s0    # IPoIB netdev (your interface) carrying head_ip/worker_ip;
                        # NCCL/GLOO control-plane sockets bind it. Must match an
                        # interface present on BOTH boxes.

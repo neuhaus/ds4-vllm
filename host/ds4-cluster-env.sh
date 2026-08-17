@@ -32,11 +32,13 @@ export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}ignore::FutureWarning"
 # auto-detect the interface with a route to the peer.
 export NCCL_SOCKET_IFNAME=${DS4_NET_IFACE:-}
 export GLOO_SOCKET_IFNAME=${DS4_NET_IFACE:-}
-# IB data path: native InfiniBand on the ConnectX-3 mlx4 HCA. DS4_RDMA_HCA
+# IB data path: native InfiniBand on the ConnectX-3 (mlx4) HCA. DS4_RDMA_HCA
 # (ds4-config.yaml rdma_hca) pins the exact device; the default matches the
-# fabric's first mlx4 port. NCCL_IB_GID_INDEX=0 is the native-IB link-local
-# GID -- index 1 is RoCEv2-IPv4-only and does not exist on an IB fabric.
-export NCCL_IB_HCA=${DS4_RDMA_HCA:-mlx4_0}
+# HCA name here (ibp195s0 -- the mlx4 device is udev-named after its netdev;
+# find yours with `ibv_devices`). NCCL_IB_GID_INDEX=0 is the native-IB
+# link-local GID -- index 1 is RoCEv2-IPv4-only and does not exist on an IB
+# fabric.
+export NCCL_IB_HCA=${DS4_RDMA_HCA:-ibp195s0}
 export NCCL_IB_GID_INDEX=0
 export NCCL_IB_DISABLE=0
 export NCCL_NET_GDR_LEVEL=0
