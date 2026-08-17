@@ -21,4 +21,7 @@ tbv/**/.*.cmd
 tbv/**/Module.symvers
 tbv/**/modules.order
 host/bench/perf_ab/results/
+# disk-KV cache tiers (repo-local runtime data, survives restarts)
+kvcache/
+kvcache-stage/
 __pycache__/

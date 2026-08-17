@@ -23,7 +23,9 @@
 # a '#' there silently comments out every remaining argument, and `bash -n`
 # still reports the file as valid.
 set -u
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds4-cluster-env.${DS4_TRANSPORT:-rdma}.sh"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
+source "${SELF_DIR}/ds4-cluster-env.${DS4_TRANSPORT:-rdma}.sh"
 
 # NVMe KV cache (fs_lru tier), ON by default. Prefix blocks evicted from GPU
 # are kept on node-local disk and reloaded instead of re-prefilled, and the
@@ -93,7 +95,7 @@ fi
 
 OFFLOAD=()
 if [ "$DS4_DISK_KV" = "1" ]; then
-  KVDIR=${DS4_DISK_KV_DIR:-$HOME/ds4-kvcache}
+  KVDIR=${DS4_DISK_KV_DIR:-${REPO_ROOT}/kvcache}
   mkdir -p "$KVDIR"
   if [ "${DS4_DISK_KV_STAGE_ON_DISK:-1}" = "1" ]; then
     # A SIBLING of the cache dir, never inside it. fs_lru owns root_dir
