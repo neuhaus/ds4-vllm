@@ -26,18 +26,27 @@
 # ceiling, and disk-KV sizing come from ds4-config.yaml.
 set -uo pipefail
 
+# Everything lives in the repo (host/), not $HOME: this script resolves its
+# sibling files relative to its own location, so it can be run straight from
+# the checkout (and box2 needs the same repo synced to the same path). Only
+# runtime state (ray temp, kernel caches, KV dir) stays in $HOME.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$SELF_DIR/ds4-config" ] || { echo "!! run from the repo (host/ layout), not a loose copy"; exit 1; }
+
 # Site specifics (IPs, transport, container name, HCA pin) come from
-# ~/ds4-config.yaml; everything else is fixed stack layout.
-eval "$("$HOME/ds4-config" "$HOME/ds4-config.yaml")"
+# ds4-config.yaml in the repo; everything else is fixed stack layout.
+eval "$("$SELF_DIR/ds4-config" "$SELF_DIR/ds4-config.yaml")"
 HEAD_IP=${DS4_HEAD_IP:?ds4-config.yaml: head_ip missing}
 WORKER_IP=${DS4_WORKER_IP:?ds4-config.yaml: worker_ip missing}
-PORT=${DS4_API_PORT:-1234}
+PORT=${DS4_API_PORT:-8000}
 CTR=${DS4_CONTAINER:-vllm}
 TRANSPORT=${DS4_TRANSPORT:-rdma}
 RAYTMP=$HOME/ray-tmp
 RAY_NUM_CPUS=${RAY_NUM_CPUS:-4}
-CENV=$HOME/ds4-cluster-env.$TRANSPORT.sh
-SERVE=$HOME/ds4-vllm-manual-serve.sh
+CENV=$SELF_DIR/ds4-cluster-env.$TRANSPORT.sh
+SERVE=$SELF_DIR/ds4-vllm-manual-serve.sh
+HEAL=$SELF_DIR/container-heal.sh
+WARMUP=$SELF_DIR/ds4-vllm-warmup.py
 UNIT=ds4-vllm-manual
 # Exports that must reach the env files on BOTH boxes (sourced at ray start).
 ENVPASS="export DS4_RDMA_HCA=${DS4_RDMA_HCA:-} DS4_NET_IFACE=${DS4_NET_IFACE:-};"
@@ -81,8 +90,8 @@ echo "   drained: box1=${u1}G box2=${u2}G swap=$(free -m | awk '/^Swap:/{print $
 
 echo "== containers =="
 # Nothing starts the containers at boot on its own, so heal both here.
-"$HOME/container-heal.sh" "$CTR" 2>&1 | sed 's/^/   /'
-box2 "\$HOME/container-heal.sh $CTR" 60 2>/dev/null | sed 's/^/   /'
+"$HEAL" "$CTR" 2>&1 | sed 's/^/   /'
+box2 "\$HEAL $CTR" 60 2>/dev/null | sed 's/^/   /'
 inbox true 20 >/dev/null 2>&1 || { echo "!! box1 $CTR container not exec-able"; exit 1; }
 box2 "podman exec $CTR true" 20 >/dev/null 2>&1 || { echo "!! box2 $CTR container not exec-able"; exit 1; }
 echo "   $CTR container exec-able on both boxes"
@@ -130,7 +139,7 @@ done
 systemctl --user reset-failed ds4-vllm-warmup.service 2>/dev/null
 systemd-run --user --collect --unit=ds4-vllm-warmup \
   --setenv=DS4_VLLM_PORT=$PORT --setenv=DS4_WARMUP_CTX=$WARMUP_CTX \
-  /usr/bin/python3 "$HOME/ds4-vllm-warmup.py" >/dev/null 2>&1 \
+  /usr/bin/python3 "$WARMUP" >/dev/null 2>&1 \
   && echo "   warmup dispatched (ctx=$WARMUP_CTX; journalctl --user -u ds4-vllm-warmup)" \
   || echo "   warmup dispatch failed (non-fatal)"
 
@@ -141,7 +150,7 @@ journalctl --user -u "$UNIT.service" --no-pager -o cat --since "-20min" 2>/dev/n
 # inside the serving container -- that is the link RCCL's all-reduce runs over.
 rdma_link=$(inbox "rdma link 2>/dev/null | grep -wE '${DS4_RDMA_HCA:-ibp195s0}' | grep -w ACTIVE" 30 2>/dev/null)
 echo "   RDMA: ${rdma_link:-!! no '${DS4_RDMA_HCA:-ibp195s0}' ACTIVE rdma link -- check cable/OpenSM}"
-echo "   RCCL bench: $HOME/ds4-rccl-bench.sh (decode all-reduce µs/op vs tbv_ar2's ~105)"
+echo "   RCCL bench: $SELF_DIR/ds4-rccl-bench.sh (decode all-reduce µs/op vs tbv_ar2's ~105)"
 echo "   vllm serve procs: $(ps -eo cmd --no-headers | grep -c 'bin/[v]llm serve deepseek') (want 1)"
 echo "   ray idle workers: $(ps -eo cmd --no-headers | grep -c '[r]ay::IDLE')"
 echo "   MemAvailable: $(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)MB"

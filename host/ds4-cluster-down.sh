@@ -10,7 +10,8 @@
 set -uo pipefail
 
 # Teardown must work even with a broken/missing config -- fall back to defaults.
-eval "$("$HOME/ds4-config" "$HOME/ds4-config.yaml" 2>/dev/null)" 2>/dev/null || true
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$("$SELF_DIR/ds4-config" "$SELF_DIR/ds4-config.yaml" 2>/dev/null)" 2>/dev/null || true
 # worker_ip from ds4-config.yaml is authoritative; this fallback only bites when
 # the config is unreadable (site value, see head_ip/worker_ip in the yaml).
 WORKER_IP=${DS4_WORKER_IP:-192.168.100.2}

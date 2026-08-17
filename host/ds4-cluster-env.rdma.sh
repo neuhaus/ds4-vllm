@@ -5,7 +5,7 @@
 # ncclCommInitRank fail with "internal error". Pin one unambiguous HCA here
 # (rdma_hca in ds4-config.yaml). RCCL runs the TP all-reduce over the mlx4
 # fabric (DS4_TBV_AR2/DS4_TBV_AR_GPU from the base env are off).
-source "$HOME/ds4-cluster-env.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds4-cluster-env.sh"
 export NCCL_IB_HCA=${DS4_RDMA_HCA:-ibp195s0}
 # RCCL logging is off. Re-enable to debug an init failure (the ncclCommInitRank
 # trap above is the one that matters); expect ~50 lines per boot, mostly the

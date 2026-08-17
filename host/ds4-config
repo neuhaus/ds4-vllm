@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Emit shell exports from the flat ds4-config.yaml.
 
-Usage: eval "$("$HOME/ds4-config")"   [config path as optional argv[1]]
+Usage: eval "$(host/ds4-config)"   [config path as optional argv[1]]
 Each `key: value` line becomes `export DS4_<KEY>=<value>`. Comments and blank
 lines are ignored. Stdlib only so it runs on a bare host python3.
 """
@@ -9,7 +9,8 @@ import os
 import shlex
 import sys
 
-path = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/ds4-config.yaml")
+_default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ds4-config.yaml")
+path = sys.argv[1] if len(sys.argv) > 1 else _default
 try:
     lines = open(path).read().splitlines()
 except OSError as e:

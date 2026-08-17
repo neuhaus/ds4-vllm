@@ -4,7 +4,7 @@
 # interface with IB/RDMA and the tbv_ar all-reduce disabled -- the
 # correctness/fallback profile for when the fabric is unavailable. Much slower
 # decode (the all-reduce is latency-bound; see README).
-source "$HOME/ds4-cluster-env.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds4-cluster-env.sh"
 export NCCL_IB_DISABLE=1
 unset  NCCL_IB_HCA NCCL_IB_GID_INDEX
 export NCCL_PROTO=Simple

@@ -1,7 +1,7 @@
 # Site configuration for the DS4 vLLM cluster.
-# Deployed as ~/ds4-config.yaml on box1 (the ray head); the cluster scripts
-# read it via `eval "$("$HOME/ds4-config")"`. Flat key: value only -- parsed
-# by ds4-config with the Python stdlib, no pyyaml.
+# Lives in the repo at host/ds4-config.yaml; the cluster scripts read it via
+# `eval "$("$SELF_DIR/ds4-config" "$SELF_DIR/ds4-config.yaml")"` (repo-relative).
+# Flat key: value only -- parsed by ds4-config with the Python stdlib, no pyyaml.
 model: deepseek-ai/DeepSeek-V4-Flash-0731   # HF id (auto-downloaded to the HF cache) or a local path; weights needed on BOTH boxes
 transport: rdma        # rdma | tcp -- which ds4-cluster-env.<transport>.sh the cluster sources
 head_ip: 192.168.100.1  # ray head control-plane address, reachable from the worker (site value)
@@ -12,7 +12,7 @@ rdma_hca: ibp195s0    # NCCL_IB_HCA pin, rdma transport only (your ConnectX-3; n
 net_iface: ibp195s0    # IPoIB netdev (your interface) carrying head_ip/worker_ip;
                        # NCCL/GLOO control-plane sockets bind it. Must match an
                        # interface present on BOTH boxes.
-api_port: 1234
+api_port: 8000
 disk_kv: true          # NVMe prefix-KV tier (fs_lru); prefixes survive restarts
 disk_kv_gib: 30        # per-NODE disk cap; check df on BOTH boxes before raising
 max_ctx: 524288        # --max-model-len (512K, the validated profile)

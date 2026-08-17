@@ -3,8 +3,8 @@
 # started by the ds4-vllm-manual systemd user unit. Sources the canonical RDMA
 # cluster-env, then execs vllm serve on api_port from ds4-config.yaml.
 #
-# THIS FILE IS THE SOURCE OF TRUTH -- copy it to the serve user's home before
-# serving. The running copy lives outside the repo; edit here, then redeploy.
+# THIS FILE IS THE SOURCE OF TRUTH -- run it straight from the repo checkout
+# (host/), same path on both boxes. No deployment copy needed.
 #
 # Memory flags, since they are the ones that bite:
 #   --kv-cache-memory-bytes  Pin KV. Inferring it oversubscribes this box: the
@@ -23,7 +23,7 @@
 # a '#' there silently comments out every remaining argument, and `bash -n`
 # still reports the file as valid.
 set -u
-source "$HOME/ds4-cluster-env.${DS4_TRANSPORT:-rdma}.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ds4-cluster-env.${DS4_TRANSPORT:-rdma}.sh"
 
 # NVMe KV cache (fs_lru tier), ON by default. Prefix blocks evicted from GPU
 # are kept on node-local disk and reloaded instead of re-prefilled, and the
@@ -127,4 +127,4 @@ exec vllm serve "${DS4_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}" \
   --tool-call-parser deepseek_v4 \
   --speculative-config '{"method":"deepseek_mtp","num_speculative_tokens":5,"disable_padded_drafter_batch":true,"enforce_eager":true}' \
   "${OFFLOAD[@]}" \
-  --host 127.0.0.1 --port "${DS4_API_PORT:-1234}"
+  --host 0.0.0.0 --port "${DS4_API_PORT:-8000}"
