@@ -13,14 +13,14 @@ Strix Halo (gfx1151) boxes**, with the inter-GPU all-reduce carried over a
 
 ```
         ┌────────────── box1 (ray HEAD, gfx1151) ──────────────┐
-        │  distrobox "vllm"  ──►  vllm serve  TP rank 0         │
+        │  toolbox "vllm"  ──►  vllm serve  TP rank 0           │
         │  ds4-vllm.service → ds4-cluster-restart.sh            │
         └───────────────┬───────────────────────────────────────┘
                         │  InfiniBand cable (QSFP)
                         │  HCA = ibp195s0  (ConnectX-3; udev-named after netdev)
                         │  control plane = head_ip / worker_ip
         ┌───────────────┴───────────────────────────────────────┐
-        │  distrobox "vllm"  ──►  ray worker  TP rank 1          │
+        │  toolbox "vllm"  ──►  ray worker  TP rank 1          │
         └────────────── box2 (ray WORKER, gfx1151) ─────────────┘
 ```
 
@@ -35,7 +35,7 @@ Three layers, build/verify them in this order:
 
 1. **InfiniBand fabric** — stock `mlx4_core`/`mlx4_ib` in-tree drivers, OpenSM
    (subnet manager), both ports Active with a LID. No custom kernel modules.
-2. **vLLM engine** (`container/`) — rebuild the patched image, one distrobox per box.
+2. **vLLM engine** (`container/`) — rebuild the patched image, one toolbox container per box.
 3. **Host orchestration** (`host/`) — the launch scripts, env, model weights.
 
 > **USB4/Thunderbolt alternative.** The original interconnect — a custom
@@ -51,7 +51,7 @@ Three layers, build/verify them in this order:
   **OpenSM running** on one of them (ConnectX-3 has no embedded subnet manager).
   `ibv_devinfo` must show the port **Active** with a LID on both boxes.
 - Linux with **kernel headers/devel** for the running kernel on each box, `podman`,
-  `distrobox`, `rdma-core`/`libibverbs`, `git`, build toolchain. mlx4 uses the
+  `toolbox`, `rdma-core`/`libibverbs`, `git`, build toolchain. mlx4 uses the
   **stock in-tree drivers** — nothing out-of-tree to build.
 - The model weights **`deepseek-ai/DeepSeek-V4-Flash-0731`** (~150 GB) downloaded
   on **both** boxes (`hf download deepseek-ai/DeepSeek-V4-Flash-0731`).
@@ -119,7 +119,7 @@ ibv_devinfo -d ibp195s0                            # port state Active, with a L
 ls /sys/class/infiniband/                          # -> ibp195s0 (udev-named after netdev)
 ip -br addr show ibp195s0                          # has head_ip / worker_ip
 ```
-Then inside the serving container: `distrobox enter vllm -- ibv_devices` must
+Then inside the serving container: `toolbox enter vllm -- ibv_devices` must
 list `ibp195s0` (the image guarantees the mlx4 libibverbs provider). The HCA
 name matches the netdev on this stack; on another box use whatever
 `ibv_devices` prints and set `rdma_hca` in the config to match.
@@ -148,16 +148,20 @@ cd container && ./build.sh                # -> ds4-vllm-patched:local  (base ~35
 This is `FROM kyuz0/vllm-therock-gfx1151@<pinned digest>` + the DS4 patch-set
 (31 modified files as `patches/vllm-upstream.patch`, 12 new — see
 `container/patches/MANIFEST.md`). Then create the serving container, named per
-`container:` in `ds4-config.yaml` (default **`vllm`**):
+`container:` in `ds4-config.yaml` (default **`vllm`**) with **toolbox** — the
+`--` separator forwards the remaining args to `podman create` (toolbox ≥ 0.3):
 
 ```bash
-distrobox create --name vllm --image ds4-vllm-patched:local --additional-flags \
-  '--privileged --ipc host --pid host \
-   --device /dev/kfd --device /dev/dri --device /dev/infiniband \
-   --group-add video --group-add render --security-opt seccomp=unconfined'
-distrobox enter vllm -- vllm --version          # gate: prints a version
-distrobox enter vllm -- ibv_devices             # gate: lists ibp195s0 (if §1 done)
+toolbox create vllm --image ds4-vllm-patched:local -- \
+  --device /dev/kfd --device /dev/dri --device /dev/infiniband \
+  --group-add keep-groups --security-opt seccomp=unconfined
+toolbox enter vllm -- vllm --version          # gate: prints a version
+toolbox enter vllm -- ibv_devices             # gate: lists ibp195s0 (if §1 done)
 ```
+
+`--group-add keep-groups` keeps the user's supplementary groups (video/render)
+so the GPU nodes stay reachable without `--privileged`; the explicit
+`/dev/infiniband` device grant covers the mlx4 HCA for the RDMA path.
 
 ## 3. Host orchestration + config
 
