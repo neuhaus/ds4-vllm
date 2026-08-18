@@ -91,7 +91,7 @@ echo "   drained: box1=${u1}G box2=${u2}G swap=$(free -m | awk '/^Swap:/{print $
 echo "== containers =="
 # Nothing starts the containers at boot on its own, so heal both here.
 "$HEAL" "$CTR" 2>&1 | sed 's/^/   /'
-box2 "\$HEAL $CTR" 60 2>/dev/null | sed 's/^/   /'
+box2 "$HEAL $CTR" 60 2>/dev/null | sed 's/^/   /'
 inbox true 20 >/dev/null 2>&1 || { echo "!! box1 $CTR container not exec-able"; exit 1; }
 box2 "podman exec $CTR true" 20 >/dev/null 2>&1 || { echo "!! box2 $CTR container not exec-able"; exit 1; }
 echo "   $CTR container exec-able on both boxes"
