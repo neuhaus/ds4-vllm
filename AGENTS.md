@@ -166,13 +166,19 @@ name, `transport: rdma|tcp`, RDMA HCA pin, disk KV). Everything runs **from
 the repo checkout** — no `$HOME` deployment copies: the scripts resolve their
 sibling files relative to their own location, and the systemd unit
 (`host/systemd/ds4-vllm.service`, installed into `~/.config/systemd/user/`)
-points at the repo's `host/ds4-cluster-restart.sh`. Two rules that bite:
+points at the repo's `host/ds4-cluster-restart.sh`. Three rules that bite:
 
 - `ds4-cluster-env*.sh` **must be byte-identical on both boxes** — the two TP
   ranks silently diverge otherwise. Keep box2's repo synced to the same
   commit at the same absolute path (box1 → box2 over ssh).
 - Box1 needs passwordless ssh to the worker IP: the cluster scripts drive
   box2's container over ssh.
+- **`loginctl enable-linger` must be set on BOTH boxes.** The serving
+  container runs under the user's rootless-podman systemd manager
+  (`user@1000.service`); with linger off, logind deactivates that manager when
+  the last session closes and the box2 container is SIGTERMed with it. The
+  cluster then silently drops to a 1-GPU placement group and serve hangs until
+  the API timeout. `ds4-cluster-restart.sh` now gates on this and fails fast.
 
 ## 4. Start serving
 

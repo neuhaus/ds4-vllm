@@ -63,6 +63,19 @@ MAX_CTX=${DS4_MAX_CTX:-524288}
 box2() { timeout "${2:-120}" ssh -o BatchMode=yes "$WORKER_IP" "$1"; }
 inbox() { timeout "${2:-120}" podman exec -u 1000:1000 -w "$HOME" "$CTR" bash -lc "$1"; }
 
+# Rootless podman runs the serving container under the user's systemd manager
+# (user@1000.service). With linger off, logind deactivates that manager the
+# moment the last session closes and the container dies with it (SIGTERM) --
+# box2 then silently loses its GPU and serve hangs on a 1-GPU placement group
+# until the API timeout. Both boxes must linger; fail fast instead.
+echo "== linger =="
+L1=$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null | cut -d= -f2)
+L2=$(box2 "loginctl show-user \$(id -un) -p Linger 2>/dev/null | cut -d= -f2" 20 2>/dev/null)
+[ "${L1:-no}" = "yes" ] && [ "${L2:-no}" = "yes" ] || {
+  echo "!! loginctl linger must be 'yes' on BOTH boxes (box1=$L1 box2=$L2) --"; \
+  echo "   sudo loginctl enable-linger \$(id -un) on both, or the cluster dies on session close"; exit 1; }
+echo "   linger: box1=$L1 box2=$L2"
+
 echo "== teardown =="
 systemctl --user stop "$UNIT.service" 2>/dev/null
 systemctl --user reset-failed "$UNIT.service" 2>/dev/null
