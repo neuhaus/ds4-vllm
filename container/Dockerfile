@@ -54,7 +54,7 @@ RUN cmake \
         -B /tmp/rocm-build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=ON && \
-    cmake --build /tmp/rocm-build --parallel 16
+    cmake --build /tmp/rocm-build --parallel "$(nproc)"
 
 FROM ${DS4_BASE}
 
