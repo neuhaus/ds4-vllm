@@ -157,7 +157,7 @@ See [`container/`](container/). On **each** box:
 cd container && ./build.sh                # -> ds4-vllm-patched:local  (base ~35 GB pulled once)
 ```
 This is `FROM kyuz0/vllm-therock-gfx1151@<pinned digest>` + the DS4 patch-set
-(31 modified files as `patches/vllm-upstream.patch`, 12 new — see
+(36 modified files as `patches/vllm-upstream.patch`, 16 new — see
 `container/patches/MANIFEST.md`). Then create the serving container, named per
 `container:` in `ds4-config.yaml` (default **`vllm`**) with **toolbox** — the
 `--` separator forwards the remaining args to `podman create` (toolbox ≥ 0.3):

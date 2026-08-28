@@ -96,7 +96,7 @@ ds4-vllm-share/
 │   ├── Dockerfile                ← FROM kyuz0 gfx1151 base + COPY the patch-set
 │   ├── build.sh                  ← podman build helper (runs the packaging tests first)
 │   ├── verify-patches.sh         ← prove patches/ really is base → rootfs
-│   ├── rootfs/                   ← the 12 NEW files at their real paths (modified files ship as the patch)
+│   ├── rootfs/                   ← the 16 NEW files at their real paths (modified files ship as the patch)
 │   └── patches/                  ← vllm-upstream.patch (base → patched) + MANIFEST.md
 ├── tbv/                          ← USB4/Thunderbolt soft-RDMA stack (NOT used on the IB path;
 │                                    the original interconnect, kept for reference)
@@ -148,11 +148,20 @@ cd container
 ```
 
 This does `FROM docker.io/kyuz0/vllm-therock-gfx1151@<pinned-digest>`, applies
-`container/patches/vllm-upstream.patch` to the base's own vLLM sources (31
-files), overlays the 12 new files from `container/rootfs/`
+`container/patches/vllm-upstream.patch` to the base's own vLLM sources (36
+files), overlays the 16 new files from `container/rootfs/`
 (see [`container/patches/MANIFEST.md`](container/patches/MANIFEST.md)), guarantees
-the stock **mlx4** (ConnectX-3) libibverbs provider via `rdma-core`, and rebuilds
-ROCr with the idle-wait fix. The custom USB4 `tbv_ar`/`tbv_ar2` all-reduce
+the stock **mlx4** (ConnectX-3) libibverbs provider via `rdma-core`, builds the
+hand-written decode kernels from `container/native/`, and rebuilds ROCr with the
+idle-wait fix. The decode kernels are a hand-written MXFP4 MoE decode (gemm1 +
+fused SILU/clamp + gemm2 with fused scatter, one contiguous march per workgroup
+instead of the against-the-grain tile the stock path reads) and a dense fp8
+GEMV that halves the bytes of the bf16 dequant-cache path for the same small-M
+fp8 dense shapes. The MXFP4 MoE wrapper is a ctypes wrapper over a library
+built in-image from `container/native/` and falls back to the stock path on any
+layout it does not recognise, so a missing library costs speed and never
+correctness. The fp8 GEMV wrapper ships unwired (no call site in the patch-set
+yet). The custom USB4 `tbv_ar`/`tbv_ar2` all-reduce
 natives are **not** built — on this IB stack RCCL runs the TP all-reduce (the
 `tbv_ar*.py` wrappers still ship, inert). The
 base is ~35 GB and is pulled on first build; network is needed on the first
@@ -248,6 +257,18 @@ The themes:
 - **Mid-context retrieval** — the sparse indexer runs the *official* QAT graph
   (Hadamard128 + FP4 sim) before top-512 scoring (`DS4_IDX_OFFICIAL`), which the
   stock FP8 indexer skipped; plus a ROCm sparse-MLA attention rewrite.
+- **Hand-written decode kernels** — a hand-written MXFP4 MoE decode (gemm1 +
+  fused SILU/clamp + gemm2 with fused scatter, one contiguous march per
+  workgroup instead of the against-the-grain tile the stock path reads) and a
+  dense fp8 GEMV that halves the bytes of the bf16 dequant-cache path for the
+  same small-M fp8 dense shapes. The MXFP4 MoE wrapper falls back to the stock
+  path on any layout it does not recognise, so a missing library costs speed
+  and never correctness; the fp8 GEMV wrapper ships unwired (no call site in
+  the patch-set yet).
+- **Reasoning effort levels** — `low` / `high` / `max` / `none` all render.
+  The encoder in the base image emitted a preamble only for `max` and silently
+  ignored `high`, so a server configured for high reasoning got no preamble and
+  no error; upstream's table is backported so the setting means something.
 - **MoE / GEMM tuning** — decode-scoped MXFP4 `matmul_ogs` knobs
   (`DS4_MOE_BN/NW/NS/BK/WPE`, the `block_k` bandwidth lever), a tuned gfx1151
   A8W8 GEMM config, and a `DS4_W8A8_BF16` fast bf16 path.

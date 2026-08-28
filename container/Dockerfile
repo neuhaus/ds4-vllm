@@ -4,10 +4,11 @@
 # TheRock/ROCm gfx1151 base image — the exact base the patches were developed
 # against. The base already contains the full ROCm 7 + PyTorch + vLLM build
 # (vLLM commit 470229c); this file applies the DeepSeek-V4 / DSpark patch
-# (patches/vllm-upstream.patch, 35 files), overlays the 16 new files from
-# ./rootfs, guarantees the stock mlx4 (ConnectX-3) libibverbs provider, and
-# rebuilds ROCr. Third-party sources are FETCHED at pinned commits, not
-# vendored (network needed on first build).
+# (patches/vllm-upstream.patch, 36 files), overlays the 16 new files from
+# ./rootfs, guarantees the stock mlx4 (ConnectX-3) libibverbs provider,
+# builds the hand-written decode kernels, and rebuilds ROCr. Third-party
+# sources are FETCHED at pinned commits, not vendored (network needed on
+# first build).
 #
 # The custom Thunderbolt/USB4 soft-RDMA provider and tbv_ar all-reduce are
 # intentionally NOT built here: this image targets a native InfiniBand fabric
@@ -58,7 +59,7 @@ RUN cmake \
 
 FROM ${DS4_BASE}
 
-# Apply the vLLM patch-set to the base's own sources (35 files), then overlay
+# Apply the vLLM patch-set to the base's own sources (36 files), then overlay
 # the 16 new files from rootfs/ (which mirrors "/"). The patch is the same
 # reviewable diff in patches/; container/verify-patches.sh proves it applies.
 COPY container/patches/vllm-upstream.patch /tmp/
@@ -70,6 +71,19 @@ COPY --chown=root:root container/rootfs/ /
 COPY --from=rocr-idle-fix --chown=root:root \
   /tmp/rocm-build/rocr/lib/libhsa-runtime64.so.1.21.0 \
   /opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/libhsa-runtime64.so.1
+
+# Build the decode kernels that ds4_moe_hip.py / ds4_hip_gemv.py ctypes-load.
+# rootfs/ carries only the python wrappers: without these libraries each wrapper
+# records a `disabled_reason` and the engine quietly uses the stock path, so a
+# missing build here costs decode speed without failing anything.
+COPY --chown=root:root container/native/ /tmp/ds4-native/
+RUN /opt/rocm/bin/hipcc -O3 --offload-arch=gfx1151 -shared -fPIC \
+      -o /opt/venv/lib/python3.12/site-packages/libds4moe.so \
+      /tmp/ds4-native/ds4_moe_mxfp4.cpp && \
+    /opt/rocm/bin/hipcc -O3 --offload-arch=gfx1151 -shared -fPIC \
+      -o /opt/venv/lib/python3.12/site-packages/libds4fp8gemv.so \
+      /tmp/ds4-native/ds4_fp8_gemv_hip.cpp && \
+    rm -rf /tmp/ds4-native
 
 # Stock rdma-core userspace (idempotent): the mlx4 provider ships with it
 # (libmlx4-rdmav2.so + /etc/libibverbs.d/mlx4.driver), which is what RCCL uses
