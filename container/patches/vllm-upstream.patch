@@ -1770,8 +1770,8 @@
 +        if (_hg and activation == MoEActivation.SILU
 +                and not apply_router_weight_on_input
 +                and getattr(self, "_lora_context", None) is None
-+                and _hg.eligible(hidden_states.shape[0], hidden_states, w1, w2,
-+                                 output, self.quant_config,
++                and _hg.eligible(hidden_states.shape[0], topk_ids, hidden_states,
++                                 w1, w2, output, self.quant_config,
 +                                 activation=activation)):
 +            _hg.fused_experts(output, hidden_states, w1, w2, topk_weights,
 +                              topk_ids, self.quant_config, tag="OAITritonExperts")
@@ -1780,7 +1780,7 @@
          routing_data, gather_indx, scatter_indx = self._make_routing_data(
              topk_ids, topk_weights, local_num_experts
          )
-@@ -844,6 +896,23 @@
+@@ -844,6 +896,24 @@
          if global_num_experts == -1:
              global_num_experts = local_num_experts
  
@@ -1794,11 +1794,12 @@
 +        if (_hg and activation == MoEActivation.SILU
 +                and not apply_router_weight_on_input
 +                and getattr(self, "_lora_context", None) is None
-+                and _hg.eligible(hidden_states.shape[0], hidden_states, w1, w2,
-+                                 output, self.quant_config,
++                and _hg.eligible(hidden_states.shape[0], topk_ids, hidden_states,
++                                 w1, w2, output, self.quant_config,
 +                                 activation=activation)):
 +            _hg.fused_experts(output, hidden_states, w1, w2, topk_weights,
-+                              topk_ids, self.quant_config, tag="UnfusedOAITritonExperts")
++                              topk_ids, self.quant_config,
++                              tag="UnfusedOAITritonExperts")
 +            return output
 +
          routing_data, gather_indx, scatter_indx = self._make_routing_data(
@@ -3133,7 +3134,7 @@
 +# prompt 79 tokens shorter than intended and a model reasoning in its unprimed
 +# voice. Upstream later renamed that same string to "high" and added a new,
 +# stronger "max"; both are reproduced verbatim below.
-+REASONING_EFFORT_PROMPTS: Dict[str, str] = {
++REASONING_EFFORT_PROMPTS: dict[str, str] = {
 +    "low": "",
 +    "high": (
 +        "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"

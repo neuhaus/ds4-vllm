@@ -17,7 +17,8 @@
 // consecutive output rows and its waves split ONE row's K, so it marches
 // contiguously; x is loaded once per wave and reused across every row.
 //
-// NT (tokens per entry) is a TEMPLATE parameter and fixed at 2. As a runtime
+// NT (tokens per entry) is a TEMPLATE parameter; the host specialises the
+// GEMMs for 1..NT (built with NT=3, decode clusters at 1-3). As a runtime
 // bound the compiler must allocate for the worst case, which spilled and ran
 // slower than triton. Entries carrying one token are padded with a dummy slot
 // whose gamma is 0 and whose ic row is scratch, so no branch is needed.

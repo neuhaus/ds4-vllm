@@ -80,7 +80,12 @@ needle/recall probes at your target context depth before it ships (see §5).
 
 Kernel/fusion changes must also pass `host/ds4-kernel-harness.py` (bit-exact
 fused-vs-stock comparison with crash-shaped + stress inputs, run inside the
-container with `HIP_LAUNCH_BLOCKING=1`). Trap: Triton 3.7.0 / ROCm 7.14
+container with `HIP_LAUNCH_BLOCKING=1`; the `moe` suite gates the MXFP4 MoE
+decode kernel bit-exact against its own `-DFP4_ARITH=1` reference build —
+against the stock `matmul_ogs` path it replaces it is documented as within
+1 bf16 ULP (different summation order), the one tolerated exception; pin any
+new kernel the same way: exact against a reference, tolerance-documented
+against stock). Trap: Triton 3.7.0 / ROCm 7.14
 miscompiles runtime-trip-count `scf.for` loops (garbage loads/stores, sporadic
 illegal memory accesses — the 2026-08-19 `_topk_ragged_decode_kernel` fault);
 the AMDGPU backend drops the trip-count branch of the guarded loop form (no

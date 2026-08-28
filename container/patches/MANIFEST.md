@@ -3,10 +3,11 @@
 All changes are a single overlay on the **`kyuz0/vllm-therock-gfx1151`** base
 (pinned digest `sha256:25fd294f…`, which ships vLLM commit **`470229c`**).
 
-- **36 modified** files — shipped as `vllm-upstream.patch` in this folder, applied to the base's own sources at image build
-  (`*.patch`, base → patched). The Dockerfile does **not** apply these; it
-  `COPY`s the final files from `../rootfs`. The diffs are here for review so a
-  reader can see exactly what changed versus upstream.
+- **36 modified** files — shipped as `vllm-upstream.patch` in this folder and
+  applied to the base's own sources at image build (`*.patch`, base → patched;
+  the Dockerfile `git apply`s it — see Dockerfile and `verify-patches.sh`). The
+  diffs are here for review so a reader can see exactly what changed versus
+  upstream.
 - **16 new** files — added by the patch set; no diff (whole file is new). Their
   final form is in `../rootfs`.
 - 1 file (`aiter_meta/csrc/cpp_itfs/utils.py`) was flagged changed by the image
@@ -50,8 +51,8 @@ modules and the aiter config).
 ## Decode kernel dispatch / fusion
 | file | Δ | purpose |
 |---|---|---|
-| `vllm/model_executor/layers/fused_moe/experts/gpt_oss_triton_kernels_moe.py` | +69 | `DS4_TINY_ROUTING` hook: route tiny decode batches through the single-kernel MoE routing in `ds4_tiny_routing`; and dispatch small-M decode to the hand-written MXFP4 path in `ds4_moe_hip` |
-| `ds4_moe_hip.py` *(venv top-level)* | **new (275)** | ctypes wrapper for `libds4moe.so` (source `container/native/ds4_moe_mxfp4.cpp`): hand-written MXFP4 MoE decode — gemm1 + fused SILU/clamp + gemm2 with fused scatter. Validates the real shapes and strides on first use and records `disabled_reason` rather than running on a layout it does not recognise |
+| `vllm/model_executor/layers/fused_moe/experts/gpt_oss_triton_kernels_moe.py` | +70 | `DS4_TINY_ROUTING` hook: route tiny decode batches through the single-kernel MoE routing in `ds4_tiny_routing`; and dispatch small-M decode to the hand-written MXFP4 path in `ds4_moe_hip` |
+| `ds4_moe_hip.py` *(venv top-level)* | **new (304)** | ctypes wrapper for `libds4moe.so` (source `container/native/ds4_moe_mxfp4.cpp`): hand-written MXFP4 MoE decode — gemm1 + fused SILU/clamp + gemm2 with fused scatter. Validates the real shapes, strides, dtypes and launch limits on first use and records `disabled_reason` (latched, layout/lib) or `_skip_reason` (per-call, batch/activation) rather than running on anything it does not recognise |
 | `ds4_hip_gemv.py` *(venv top-level)* | **new (101)** | ctypes wrapper for `libds4fp8gemv.so` (source `container/native/ds4_fp8_gemv_hip.cpp`): dense fp8 decode GEMV, halving the bytes of the bf16 dequant-cache path for small-M shapes. Shipped unwired: no call site in the patch-set yet (verbatim from the source branch) |
 | `ds4_tiny_routing.py` *(venv top-level)* | **new (174)** | single-kernel MoE routing for tiny decode batches (replaces the 5-launch bitmatrix pipeline; bit-exact, cached output buffers). `DS4_TINY_ROUTING=1` enables |
 | `vllm/__init__.py` | +12 | import hook for the `DS4_FAST_TRITON` cached Triton launcher |
