@@ -384,11 +384,15 @@ def _moe_quant(s1, s2, clamp=10.0):
 
 
 def _moe_weights(g, E, K1, N1, K2, N2):
-    v1 = torch.randint(0, 256, (E, K1 // 2, N1), generator=g).to(torch.uint8).to(DEV)
-    v2 = torch.randint(0, 256, (E, K2 // 2, N2), generator=g).to(torch.uint8).to(DEV)
+    # The engine hands the wrapper a transpose_(-2,-1) VIEW: values are
+    # contiguous [E, N, K/2] (row n at n*K/2, 2 k per byte) and scales
+    # contiguous [E, N, K/32]. Build exactly that, then view it as the
+    # [E, K/2, N] shape eligible()/_plan read.
+    v1 = torch.randint(0, 256, (E, N1, K1 // 2), generator=g).to(torch.uint8).to(DEV).transpose(1, 2)
+    v2 = torch.randint(0, 256, (E, N2, K2 // 2), generator=g).to(torch.uint8).to(DEV).transpose(1, 2)
     # e8m0 exponents kept near 1.0 so f32 accumulators cannot overflow
-    s1 = torch.randint(118, 137, (E, K1 // 32, N1), generator=g).to(torch.uint8).to(DEV)
-    s2 = torch.randint(118, 137, (E, K2 // 32, N2), generator=g).to(torch.uint8).to(DEV)
+    s1 = torch.randint(118, 137, (E, N1, K1 // 32), generator=g).to(torch.uint8).to(DEV).transpose(1, 2)
+    s2 = torch.randint(118, 137, (E, N2, K2 // 32), generator=g).to(torch.uint8).to(DEV).transpose(1, 2)
     return v1, v2, s1, s2
 
 
@@ -482,6 +486,10 @@ def moe_eligibility_gates():
     import ds4_moe_hip as m
     print("START moe/eligible_gates", flush=True)
     try:
+        # the suite order must not matter here: clear any latch earlier cases
+        # may have set, this case tests the gate semantics from a clean slate
+        m.disabled_reason = None
+        m._skip_reason = None
         K1, N1 = 4096, 2048
         K2, N2 = N1 // 2, K1
         g = torch.Generator().manual_seed(7)
@@ -505,16 +513,25 @@ def moe_eligibility_gates():
                       activation=silu):
             print("FAIL eligible_gates: accepted int16 topk_ids")
             return False
+        if m.disabled_reason is not None:
+            print("FAIL eligible_gates: dtype skip latched disabled_reason")
+            return False
         # K=1536 passes K%512==0 but gives wpr=3 waves: the C wrapper would
         # return -2 and fused_experts would raise; eligible must refuse first
-        w1b = torch.randint(0, 256, (E, 1536 // 2, N1), generator=g).to(torch.uint8)
-        s1b = torch.randint(118, 137, (E, 1536 // 32, N1), generator=g).to(torch.uint8)
+        w1b = torch.randint(0, 256, (E, N1, 1536 // 2),
+                            generator=g).to(torch.uint8).transpose(1, 2)
+        s1b = torch.randint(118, 137, (E, N1, 1536 // 32),
+                            generator=g).to(torch.uint8).transpose(1, 2)
         qcb = _moe_quant(s1b, s2, 10.0)
         if m.eligible(M, ids, torch.randn(M, 1536).to(torch.bfloat16).to(DEV),
                       w1b, v2, torch.empty(M, N2, dtype=torch.bfloat16,
                                            device=DEV), qcb, activation=silu):
             print("FAIL eligible_gates: accepted K1=1536 (wpr=3)")
             return False
+        if m.disabled_reason is None:
+            print("FAIL eligible_gates: layout-class refusal did not latch")
+            return False
+        m.disabled_reason = None   # layout latches by design; reset for below
         # activation mismatch is a per-call skip, not a latch
         if m.eligible(M, ids, x, v1, v2, out, qc,
                       activation=types.SimpleNamespace(name="SWIGLUOAI")):
