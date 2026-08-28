@@ -265,6 +265,13 @@ The themes:
   path on any layout it does not recognise, so a missing library costs speed
   and never correctness; the fp8 GEMV wrapper ships unwired (no call site in
   the patch-set yet).
+- **Fused decode-layer RMSNorm** — the mhc hyperconnection kernels accepted a
+  `norm_weight` (emitting the RMSNorm-ed `layer_input` inside the kernel) all
+  along, but the model never passed one: `attn_norm`/`ffn_norm` ran as two
+  extra standalone kernels per layer, every decode step. The norm weights are
+  wired through and the standalone norms dropped. The fused output is within
+  1-2 bf16 ulps of the separate path (one rounding instead of two; sampled
+  outputs are not bit-paired).
 - **Reasoning effort levels** — `low` / `high` / `max` / `none` all render.
   The encoder in the base image emitted a preamble only for `max` and silently
   ignored `high`, so a server configured for high reasoning got no preamble and
